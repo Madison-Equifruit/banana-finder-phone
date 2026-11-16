@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Banana Finder</title>
+<meta name="description" content="Sends your phone's live location to the Equifruit Banana Finder over Bluetooth.">
+<meta name="theme-color" content="#FBBB20">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cream: #EAE3DA; --dark: #2E2624; --yellow: #FBBB20; --mint: #9AC9B5;
+    --orange: #F08050; --lavender: #D8C7E0; --card: #F6F2EC; --muted: #6B5F5B;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--cream); color: var(--dark); }
+  body {
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+    max-width: 520px; margin: 0 auto; min-height: 100vh;
+  }
+  .display { font-family: "Archivo Black", "Arial Black", Arial, sans-serif; text-transform: uppercase; letter-spacing: .01em; }
+  header { display: flex; align-items: center; gap: 12px; margin: 4px 0 20px; }
+  header img { width: 56px; height: 56px; border-radius: 14px; }
+  header h1 { margin: 0; font-size: 26px; line-height: 1; }
+  header p { margin: 4px 0 0; font-size: 13px; color: var(--muted); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+
+  #go {
+    display: block; width: 100%; min-height: 72px; border: 3px solid var(--dark); border-radius: 18px;
+    background: var(--yellow); color: var(--dark); font-size: 24px; cursor: pointer;
+    box-shadow: 0 5px 0 var(--dark); transition: transform .06s, box-shadow .06s;
+  }
+  #go:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--dark); }
+  #go.stop { background: var(--card); font-size: 18px; min-height: 56px; }
+  #go:disabled { opacity: .5; }
+
+  .rows { margin: 22px 0 16px; display: grid; gap: 10px; }
+  .row { background: var(--card); border: 2px solid var(--dark); border-radius: 16px; padding: 12px 14px; display: grid; grid-template-columns: 16px 1fr; gap: 2px 12px; align-items: start; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--dark); background: var(--cream); margin-top: 3px; }
+  .dot.ok { background: var(--mint); }
+  .dot.busy { background: var(--yellow); animation: pulse 1s ease-in-out infinite; }
+  .dot.bad { background: var(--orange); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .label { font-size: 12px; font-weight: 800; letter-spacing: .1em; color: var(--muted); }
+  .value { grid-column: 2; font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+  .value.big { font-family: "Archivo Black", "Arial Black", Arial, sans-serif; text-transform: uppercase; font-size: 20px; font-weight: 400; line-height: 1.15; }
+  .sub { grid-column: 2; font-size: 14px; color: var(--muted); }
+
+  .note { border-radius: 14px; padding: 12px 14px; font-size: 15px; background: var(--lavender); }
+  .note.warn { background: var(--orange); color: var(--dark); font-weight: 600; }
+  .note strong { display: block; margin-bottom: 2px; }
+  footer { margin-top: 22px; font-size: 12px; color: var(--muted); text-align: center; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <img src="icon-192.png" alt="">
+  <div>
+    <h1 class="display">Banana Finder</h1>
+    <p>Phone GPS link</p>
+  </div>
+</header>
+
+<div id="unsupported" class="note warn" hidden></div>
+
+<button id="go" class="display" type="button">Connect</button>
+
+<section class="rows" aria-live="polite">
+  <div class="row">
+    <span class="dot" id="btDot"></span><span class="label">BLUETOOTH</span>
+    <span class="value" id="btText">Not connected</span>
+  </div>
+  <div class="row">
+    <span class="dot" id="gpsDot"></span><span class="label">PHONE LOCATION</span>
+    <span class="value" id="gpsText">Not started</span>
+    <span class="sub" id="gpsSub"></span>
+  </div>
+  <div class="row">
+    <span class="dot" id="devDot"></span><span class="label">BANANA FINDER SAYS</span>
+    <span class="value big" id="devText">&mdash;</span>
+    <span class="sub" id="devSub"></span>
+  </div>
+</section>
+
+<div class="note" id="tip">
+  <strong>Keep this page open while you walk.</strong>
+  <span id="tipText">Chrome stops sharing location when the screen is off or you switch apps. This page keeps your screen awake while connected.</span>
+</div>
+
+<footer>Your location goes straight to the device over Bluetooth. Nothing is sent to a server.</footer>
+
+<script>
+'use strict';
+// Must match PhoneLink.h in the firmware.
+const SERVICE_UUID  = '7d3e0001-5a2b-4f6c-9e8d-0b1a2c3d4e5f';
+const LOCATION_UUID = '7d3e0002-5a2b-4f6c-9e8d-0b1a2c3d4e5f';
+const STATUS_UUID   = '7d3e0003-5a2b-4f6c-9e8d-0b1a2c3d4e5f';
+const PROTOCOL_VERSION = 1;
+const MIN_GAP_MS = 1000;      // never write more than once a second
+const HEARTBEAT_MS = 3000;    // resend the last fix so the device never times out (it allows 90 s)
+const STALE_FIX_MS = 60000;   // stop sending a fix older than this; the device then shows "waiting"
+
+// 12-byte location packet, little-endian. See PhoneLink.h.
+function encodeLocation(lat, lon, accuracyM, seq) {
+  const buf = new ArrayBuffer(12), v = new DataView(buf);
+  v.setInt32(0, Math.round(lat * 1e7), true);
+  v.setInt32(4, Math.round(lon * 1e7), true);
+  v.setUint16(8, Math.min(65535, Math.max(0, Math.round(accuracyM * 10))), true);
+  v.setUint8(10, PROTOCOL_VERSION);
+  v.setUint8(11, seq & 255);
+  return buf;
+}
+
+function ago(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 2 ? 'just now' : s < 60 ? s + ' s ago' : Math.round(s / 60) + ' min ago';
+}
+
+if (typeof document !== 'undefined') (function () {
+  const $ = id => document.getElementById(id);
+  const go = $('go');
+  let device = null, locChar = null, statChar = null;
+  let wanted = false, retries = 0, retryTimer = null;
+  let watchId = null, fix = null, seq = 0, busy = false, lastSentAt = 0, lastDeviceAt = 0;
+  let wakeLock = null;
+
+  function set(dotId, textId, state, text) {
+    $(dotId).className = 'dot ' + (state || '');
+    $(textId).textContent = text;
+  }
+  const setBt = (s, t) => set('btDot', 'btText', s, t);
+  const setGps = (s, t) => set('gpsDot', 'gpsText', s, t);
+
+  function refreshButton() {
+    const linking = wanted;
+    go.textContent = linking ? 'Disconnect' : 'Connect';
+    go.classList.toggle('stop', linking);
+  }
+
+  function errText(e) {
+    if (!e) return 'Unknown error';
+    if (e.name === 'NetworkError') return 'Banana Finder is out of range or switched off';
+    if (e.name === 'SecurityError') return 'Bluetooth was blocked for this page';
+    if (e.name === 'NotAllowedError') return 'Bluetooth permission was not given';
+    return e.message || String(e);
+  }
+
+  // ---------- Bluetooth
+  async function connect() {
+    wanted = true; refreshButton();
+    setBt('busy', 'Pick BANANA-FINDER in the list');
+    try {
+      device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }] });
+    } catch (e) {
+      wanted = false; refreshButton();
+      if (e.name === 'NotFoundError') setBt('', 'Nothing picked. Is Banana Finder switched on and close by?');
+      else setBt('bad', errText(e));
+      return;
+    }
+    device.addEventListener('gattserverdisconnected', onLinkLost);
+    startLocation();
+    keepAwake();
+    await link();
+  }
+
+  async function link() {
+    clearTimeout(retryTimer);
+    if (!wanted || !device) return;
+    setBt('busy', 'Connecting to ' + (device.name || 'Banana Finder'));
+    try {
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      locChar = await service.getCharacteristic(LOCATION_UUID);
+      statChar = await service.getCharacteristic(STATUS_UUID);
+      retries = 0;
+      setBt('ok', 'Connected to ' + (device.name || 'Banana Finder'));
+      sendFix(true);
+    } catch (e) {
+      locChar = statChar = null;
+      retryLater(errText(e));
+    }
+  }
+
+  function onLinkLost() {
+    locChar = statChar = null;
+    if (wanted) retryLater('Connection lost');
+    else setBt('', 'Not connected');
+  }
+
+  function retryLater(why) {
+    if (!wanted) return;
+    clearTimeout(retryTimer);   // a failed connect can report twice; keep one timer
+    const wait =Math.min(15000, 1000 * Math.pow(2, retries++));
+    setBt('bad', why + '. Trying again in ' + Math.round(wait / 1000) + ' s');
+    retryTimer = setTimeout(link, wait);
+  }
+
+  function disconnect() {
+    wanted = false; refreshButton();
+    clearTimeout(retryTimer);
+    stopLocation();
+    releaseAwake();
+    if (device && device.gatt.connected) device.gatt.disconnect();
+    locChar = statChar = null;
+    setBt('', 'Disconnected');
+    set('devDot', 'devText', '', '—'); $('devSub').textContent = '';
+  }
+
+  async function sendFix(force) {
+    if (!locChar || !fix || busy) return;
+    const now = Date.now();
+    if (!force && now - lastSentAt < MIN_GAP_MS) return;
+    if (now - fix.at > STALE_FIX_MS) return;
+    busy = true;
+    try {
+      const packet = encodeLocation(fix.lat, fix.lon, fix.acc, seq++);
+      if (locChar.writeValueWithResponse) await locChar.writeValueWithResponse(packet);
+      else await locChar.writeValue(packet);
+      lastSentAt = Date.now();
+      if (statChar) {
+        const raw = await statChar.readValue();
+        showDevice(new TextDecoder().decode(raw));
+      }
+    } catch (e) {
+      // A dropped link fires gattserverdisconnected, which reconnects.
+    } finally {
+      busy = false;
+    }
+  }
+
+  function showDevice(text) {
+    lastDeviceAt = Date.now();
+    const [main, sub] = text.split('|');
+    const waiting = /^WAITING/.test(main);
+    set('devDot', 'devText', waiting ? 'busy' : 'ok', main || '—');
+    $('devSub').textContent = sub || '';
+  }
+
+  // ---------- Location
+  function startLocation() {
+    if (watchId !== null) return;
+    setGps('busy', 'Asking for your location');
+    watchId = navigator.geolocation.watchPosition(p => {
+      fix = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, at: Date.now() };
+      setGps(fix.acc <= 30 ? 'ok' : 'busy', 'Accurate to ±' + Math.round(fix.acc) + ' m');
+      sendFix(false);
+    }, e => {
+      if (e.code === 1) setGps('bad', 'Location is blocked. Tap the icon left of the address → Permissions → Location → Allow, then reload.');
+      else if (e.code === 2) setGps('bad', 'No location. Turn on Location in Android settings.');
+      else setGps('busy', 'Still waiting for a location fix');
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+  }
+
+  function stopLocation() {
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    watchId = null; fix = null;
+    setGps('', 'Not started'); $('gpsSub').textContent = '';
+  }
+
+  // ---------- Screen awake
+  async function keepAwake() {
+    if (!('wakeLock' in navigator)) { $('tipText').textContent = 'Keep your screen on: this phone cannot keep it awake automatically.'; return; }
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } catch (e) { /* not visible yet; retried on visibilitychange */ }
+  }
+  function releaseAwake() { if (wakeLock) wakeLock.release(); wakeLock = null; }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !wanted) return;
+    keepAwake();
+    if (device && !device.gatt.connected) { retries = 0; link(); }
+  });
+
+  // ---------- Heartbeat + "updated x ago"
+  setInterval(() => {
+    const now = Date.now();
+    if (fix) {
+      const old = now - fix.at > STALE_FIX_MS;
+      $('gpsSub').textContent = old ? 'Last fix is too old, not sending it (' + ago(now - fix.at) + ')' : 'Updated ' + ago(now - fix.at);
+    }
+    if (locChar && now - lastSentAt >= HEARTBEAT_MS) sendFix(true);
+    if (lastDeviceAt && !locChar) $('devSub').textContent = 'Last heard ' + ago(now - lastDeviceAt);
+  }, 1000);
+
+  // ---------- Start
+  go.addEventListener('click', () => (wanted ? disconnect() : connect()));
+
+  const problems = [];
+  if (!window.isSecureContext) problems.push('This page must be opened from its https:// address.');
+  if (!navigator.bluetooth) problems.push('This browser cannot use Bluetooth from a web page. Open this page in Chrome on Android. iPhone is not supported.');
+  if (!navigator.geolocation) problems.push('This browser cannot share location.');
+  if (problems.length) {
+    $('unsupported').textContent = problems.join(' ');
+    $('unsupported').hidden = false;
+    go.disabled = true;
+  } else if (navigator.bluetooth.getAvailability) {
+    navigator.bluetooth.getAvailability().then(ok => { if (!ok) setBt('bad', 'Bluetooth is off. Turn it on, then tap Connect.'); });
+  }
+})();
+
+if (typeof module !== 'undefined') module.exports = { encodeLocation, ago };
+</script>
+</body>
+</html>
