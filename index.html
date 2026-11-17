@@ -103,7 +103,8 @@ const STATUS_UUID   = '7d3e0003-5a2b-4f6c-9e8d-0b1a2c3d4e5f';
 const PROTOCOL_VERSION = 1;
 const MIN_GAP_MS = 1000;      // never write more than once a second
 const HEARTBEAT_MS = 3000;    // resend the last fix so the device never times out (it allows 90 s)
-const STALE_FIX_MS = 60000;   // stop sending a fix older than this; the device then shows "waiting"
+const STALE_FIX_MS = 600000;  // stop sending a fix older than this (10 min); the device then shows "waiting"
+const POKE_MS = 15000;        // Android stops reporting positions while you stand still; ask again after this
 
 // 12-byte location packet, little-endian. See PhoneLink.h.
 function encodeLocation(lat, lon, accuracyM, seq) {
@@ -246,14 +247,26 @@ if (typeof document !== 'undefined') (function () {
   }
 
   // ---------- Location
+  function gotPosition(p) {
+    fix = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, at: Date.now() };
+    setGps(fix.acc <= 30 ? 'ok' : 'busy', 'Accurate to ±' + Math.round(fix.acc) + ' m');
+    sendFix(false);
+  }
+
+  // Standing still, Android often delivers no new positions to watchPosition.
+  // A one-off request refreshes the fix (and the "Updated x ago" line).
+  let pokedAt = 0;
+  function pokeLocation(now) {
+    if (watchId === null || now - pokedAt < POKE_MS) return;
+    if (fix && now - fix.at < POKE_MS) return;
+    pokedAt = now;
+    navigator.geolocation.getCurrentPosition(gotPosition, () => {}, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+  }
+
   function startLocation() {
     if (watchId !== null) return;
     setGps('busy', 'Asking for your location');
-    watchId = navigator.geolocation.watchPosition(p => {
-      fix = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, at: Date.now() };
-      setGps(fix.acc <= 30 ? 'ok' : 'busy', 'Accurate to ±' + Math.round(fix.acc) + ' m');
-      sendFix(false);
-    }, e => {
+    watchId = navigator.geolocation.watchPosition(gotPosition, e => {
       if (e.code === 1) setGps('bad', 'Location is blocked. Tap the icon left of the address → Permissions → Location → Allow, then reload.');
       else if (e.code === 2) setGps('bad', 'No location. Turn on Location in Android settings.');
       else setGps('busy', 'Still waiting for a location fix');
@@ -289,6 +302,7 @@ if (typeof document !== 'undefined') (function () {
       const old = now - fix.at > STALE_FIX_MS;
       $('gpsSub').textContent = old ? 'Last fix is too old, not sending it (' + ago(now - fix.at) + ')' : 'Updated ' + ago(now - fix.at);
     }
+    pokeLocation(now);
     if (locChar && now - lastSentAt >= HEARTBEAT_MS) sendFix(true);
     if (lastDeviceAt && !locChar) $('devSub').textContent = 'Last heard ' + ago(now - lastDeviceAt);
   }, 1000);
