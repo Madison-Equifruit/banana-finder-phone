@@ -155,7 +155,11 @@ if (typeof document !== 'undefined') (function () {
     wanted = true; refreshButton();
     setBt('busy', 'Pick BANANA-FINDER in the list');
     try {
-      device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE_UUID] }] });
+      // The service UUID rides in the scan response; the name is the fallback match.
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [SERVICE_UUID] }, { namePrefix: 'BANANA' }],
+        optionalServices: [SERVICE_UUID],
+      });
     } catch (e) {
       wanted = false; refreshButton();
       if (e.name === 'NotFoundError') setBt('', 'Nothing picked. Is Banana Finder switched on and close by?');
