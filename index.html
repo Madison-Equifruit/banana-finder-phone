@@ -53,6 +53,14 @@
   .note { border-radius: 14px; padding: 12px 14px; font-size: 15px; background: var(--lavender); }
   .note.warn { background: var(--orange); color: var(--dark); font-weight: 600; }
   .note strong { display: block; margin-bottom: 2px; }
+  .note.ios { background: var(--yellow); border: 3px solid var(--dark); margin-bottom: 16px; }
+  .note.ios strong { font-size: 19px; font-weight: 400; margin-bottom: 6px; }
+  .note.ios ol { margin: 8px 0 12px; padding-left: 22px; }
+  .note.ios li { margin: 3px 0; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn { flex: 1 1 140px; display: inline-flex; align-items: center; justify-content: center; min-height: 48px;
+         border: 2px solid var(--dark); border-radius: 12px; background: var(--card); color: var(--dark);
+         font: 700 16px/1 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; text-decoration: none; cursor: pointer; }
   footer { margin-top: 22px; font-size: 12px; color: var(--muted); text-align: center; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
   [hidden] { display: none !important; }
 </style>
@@ -67,6 +75,21 @@
 </header>
 
 <div id="unsupported" class="note warn" hidden></div>
+
+<div id="ios" class="note ios" hidden>
+  <strong class="display">On iPhone? Use Bluefy</strong>
+  Apple doesn't let Safari or Chrome use Bluetooth, so open this page in the free
+  <b>Bluefy</b> browser instead.
+  <ol>
+    <li>Install Bluefy from the App Store.</li>
+    <li>Tap <b>Copy link</b> below.</li>
+    <li>Open Bluefy, paste the link in its address bar, then tap <b>Connect</b>.</li>
+  </ol>
+  <div class="actions">
+    <a class="btn" href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055" target="_blank" rel="noopener">Get Bluefy</a>
+    <button class="btn" id="copyLink" type="button">Copy link</button>
+  </div>
+</div>
 
 <button id="go" class="display" type="button">Connect</button>
 
@@ -89,7 +112,7 @@
 
 <div class="note" id="tip">
   <strong>Keep this page open while you walk.</strong>
-  <span id="tipText">Chrome stops sharing location when the screen is off or you switch apps. This page keeps your screen awake while connected.</span>
+  <span id="tipText">Your phone stops sharing location when the screen is off or you switch apps. This page keeps your screen awake while connected.</span>
 </div>
 
 <footer>Your location goes straight to the device over Bluetooth. Nothing is sent to a server.</footer>
@@ -310,15 +333,28 @@ if (typeof document !== 'undefined') (function () {
   // ---------- Start
   go.addEventListener('click', () => (wanted ? disconnect() : connect()));
 
+  // iPhone/iPad (iPadOS reports itself as a Mac with touch). Every iOS browser is
+  // Safari underneath and has no Web Bluetooth, except Bluefy, which adds it.
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const problems = [];
   if (!window.isSecureContext) problems.push('This page must be opened from its https:// address.');
-  if (!navigator.bluetooth) problems.push('This browser cannot use Bluetooth from a web page. Open this page in Chrome on Android. iPhone is not supported.');
+  if (!navigator.bluetooth && !isIOS) problems.push('This browser cannot use Bluetooth from a web page. Open this page in Chrome on Android, or in the Bluefy app on iPhone.');
   if (!navigator.geolocation) problems.push('This browser cannot share location.');
+  if (isIOS && !navigator.bluetooth) {
+    $('ios').hidden = false;
+    go.disabled = true;
+    $('copyLink').addEventListener('click', async () => {
+      const b = $('copyLink');
+      try { await navigator.clipboard.writeText(location.href); b.textContent = 'Link copied ✓'; }
+      catch (e) { window.prompt('Copy this link, then paste it into Bluefy:', location.href); }
+    });
+  }
   if (problems.length) {
     $('unsupported').textContent = problems.join(' ');
     $('unsupported').hidden = false;
     go.disabled = true;
-  } else if (navigator.bluetooth.getAvailability) {
+  } else if (navigator.bluetooth && navigator.bluetooth.getAvailability) {
     navigator.bluetooth.getAvailability().then(ok => { if (!ok) setBt('bad', 'Bluetooth is off. Turn it on, then tap Connect.'); });
   }
 })();
